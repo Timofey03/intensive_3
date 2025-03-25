@@ -1,100 +1,104 @@
-import tkinter as tk
-from tkinter import ttk
 import pandas as pd
 import numpy as np
-import joblib
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from datetime import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-# Загружаем модель
-model = joblib.load("lightgbm_model.pkl")
+GITHUB_TEST_XLSX_URL = "https://github.com/samoletpanfilov/reinforcement_task/raw/master/data/test.xlsx"
+original_data = pd.read_excel(GITHUB_TEST_XLSX_URL)
+predicted_data = pd.read_excel("test.xlsx")
 
-# Загружаем данные
-GITHUB_TEST_XLSX_URL = "test.xlsx"
-data = pd.read_excel(GITHUB_TEST_XLSX_URL)
+original_data["dt"] = pd.to_datetime(original_data["dt"])
+predicted_data["dt"] = pd.to_datetime(predicted_data["dt"])
 
-# Функция для предсказания
-def predict_price():
-    selected_date = date_entry.get()
+merged_data = original_data[["dt", "Цена на арматуру"]].merge(
+    predicted_data[["dt", "predicted_price", "N"]], on="dt", how="inner"
+)
+
+data_dict = merged_data.set_index("dt").to_dict("index")
+
+
+def calculate_metrics():
+    """Функция расчета метрик и вывода данных по выбранной дате"""
+    selected_date = date_var.get()
+
+    if not selected_date:
+        messagebox.showerror("Ошибка", "Выберите дату!")
+        return
+
+    selected_date = pd.to_datetime(selected_date)
+
+    if selected_date not in data_dict:
+        messagebox.showerror("Ошибка", "Данные за выбранную дату отсутствуют!")
+        return
+
+    real_price = data_dict[selected_date]["Цена на арматуру"]
+    predicted_price = data_dict[selected_date]["predicted_price"]
+    predicted_weeks = data_dict[selected_date]["N"]
+
+    real_price_label.config(text=f"Реальная цена: {real_price:.2f} руб.")
+    predicted_price_label.config(text=f"Прогноз цены: {predicted_price:.2f} руб.")
+    predicted_weeks_label.config(text=f"Рекомендованное количество недель для закупки: {predicted_weeks:.0f} недель")
+
+    # Расчет метрик
+    y_true = merged_data["Цена на арматуру"]
+    y_pred_price = merged_data["predicted_price"]
     
-    if selected_date:
-        try:
-            date_obj = datetime.strptime(selected_date, "%Y-%m-%d")
-            row = data[data["dt"] == date_obj]
-            
-            if row.empty:
-                result_label.config(text="⚠ Дата отсутствует в данных")
-                return
-            
-            # Формируем входные данные для модели
-            features = row.drop(columns=["dt", "Цена на арматуру"]).values
-            predicted_price = model.predict(features)[0]
+    mae = mean_absolute_error(y_true, y_pred_price)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred_price))
+    mape = np.mean(np.abs((y_true - y_pred_price) / y_true)) * 100
 
-            real_price = row["Цена на арматуру"].values[0]
-            weeks_recommendation = int(abs(real_price - predicted_price) // 1000)  # Условная формула рекомендации
+    mae_label.config(text=f"MAE: {mae:.2f}")
+    rmse_label.config(text=f"RMSE: {rmse:.2f}")
+    mape_label.config(text=f"MAPE: {mape:.2f}%")
 
-            # Обновляем текст на экране
-            result_label.config(text=(
-                f"📅 Дата: {selected_date}\n"
-                f"✔ Реальная цена: {real_price:.2f} руб/т\n"
-                f"🔮 Прогноз: {predicted_price:.2f} руб/т\n"
-                f"📌 Рекомендация: {weeks_recommendation} недель"
-            ))
+    plt.figure(figsize=(12, 6))
+    plt.plot(merged_data["dt"], y_true, label="Реальная цена", marker="o")
+    plt.plot(merged_data["dt"], y_pred_price, label="Прогноз", marker="s", linestyle="dashed")
+    plt.axvline(selected_date, color='r', linestyle='--', label="Выбранная дата")
+    plt.scatter([selected_date], [real_price], color='blue', s=100, zorder=3, label="Выбранная реальная цена")
+    plt.scatter([selected_date], [predicted_price], color='green', s=100, zorder=3, label="Выбранный прогноз цены")
+    plt.xlabel("Дата")
+    plt.ylabel("Цена")
+    plt.title("📈 Сравнение прогноза и реальных данных")
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.show()
 
-            # Построение графика
-            plot_graph(selected_date, real_price, predicted_price)
 
-        except ValueError:
-            result_label.config(text="⚠ Неверный формат даты (должно быть YYYY-MM-DD)")
+root = tk.Tk()
+root.title("Прогноз цены на арматуру")
+root.geometry("500x450")
 
-# Функция построения графика
-def plot_graph(selected_date, real_price, predicted_price):
-    fig, ax = plt.subplots(figsize=(8, 4))
+# Виджет выбора даты
+tk.Label(root, text="Выберите дату:").pack(pady=5)
+date_var = tk.StringVar()
+date_combobox = ttk.Combobox(root, textvariable=date_var, values=merged_data["dt"].astype(str).tolist())
+date_combobox.pack(pady=5)
 
-    # Исторические данные
-    ax.plot(data["dt"], data["Цена на арматуру"], label="Реальные значения", marker="o", color="blue")
-    
-    # Прогноз
-    ax.scatter([pd.to_datetime(selected_date)], [predicted_price], color="red", marker="s", label="Прогноз")
-    
-    ax.set_xlabel("Дата")
-    ax.set_ylabel("Цена на арматуру (руб/т)")
-    ax.set_title("📈 Сравнение реальных и предсказанных значений")
-    ax.legend()
-    ax.grid(True)
+# Кнопка расчета
+calculate_btn = tk.Button(root, text="Показать данные", command=calculate_metrics)
+calculate_btn.pack(pady=10)
 
-    # Отображение графика в Tkinter
-    canvas = FigureCanvasTkAgg(fig, master=window)
-    canvas.draw()
-    canvas.get_tk_widget().pack()
+# Метки для вывода результатов
+real_price_label = tk.Label(root, text="Реальная цена: -")
+real_price_label.pack(pady=5)
 
-# Создание GUI
-window = tk.Tk()
-window.title("Прогноз цен на арматуру")
-window.geometry("600x500")
+predicted_price_label = tk.Label(root, text="Прогноз цены: -")
+predicted_price_label.pack(pady=5)
 
-# Заголовок
-label = tk.Label(window, text="Прогноз цен на арматуру", font=("Arial", 14))
-label.pack(pady=10)
+predicted_weeks_label = tk.Label(root, text="Рекомендованное количество недель: -")
+predicted_weeks_label.pack(pady=5)
 
-# Поле для выбора даты
-date_label = tk.Label(window, text="Выберите дату:")
-date_label.pack()
+mae_label = tk.Label(root, text="MAE: -")
+mae_label.pack(pady=5)
 
-date_entry = ttk.Entry(window)
-date_entry.pack()
+rmse_label = tk.Label(root, text="RMSE: -")
+rmse_label.pack(pady=5)
 
-# Кнопка предсказания
-predict_button = tk.Button(window, text="Показать прогноз", command=predict_price)
-predict_button.pack(pady=10)
+mape_label = tk.Label(root, text="MAPE: -")
+mape_label.pack(pady=5)
 
-# Результат
-result_label = tk.Label(window, text="", font=("Arial", 12), fg="green")
-result_label.pack()
-
-# Кнопка построения графика
-graph_button = tk.Button(window, text="Построить график", command=lambda: plot_graph(date_entry.get(), 0, 0))
-graph_button.pack(pady=10)
-
-window.mainloop()
+root.mainloop()
